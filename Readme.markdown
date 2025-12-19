@@ -63,7 +63,7 @@ The sample code is a C# console application that uses the `PowerPAPIClient` clas
 ```csharp
 using PowerP.Realtime.API.Client;
 
-string _apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+string _apiKey = "<YOUR_API_KEY>";
 string _baseUrl = "https://xxx.powerp.app/rt-api/api/";
 
 // Initializing the API client with base URL and API key
