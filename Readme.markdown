@@ -13,6 +13,20 @@ The sample code demonstrates how to:
 - Process measurements in blocks with a specified lookback period.
 - Retrieve and display measurement data.
 
+## Repository Layout and Quick Start
+- **Library**: `src/PowerP.Realtime.API.Client/` contains the reusable client and DTOs.
+- **C# sample**: `samples/csharp/` shows batched queries with a 20-signal cap per call; run `dotnet run --project samples/csharp/PowerP.Realtime.API.Sample.csproj` after setting `POWERP_API_KEY` (and optionally `POWERP_API_BASE_URL`).
+- **Python notebook**: `samples/python/PowerPAPIClient.ipynb` documents the same flow; install `pip install -r samples/python/requirements.txt` and run it in Jupyter.
+- Respect API limits by keeping block sizes between 5-10 signals and lookback windows under 30 minutes for raw data.
+
+## Environment Variables
+- `POWERP_API_KEY`: Bearer token for the API (required).
+- `POWERP_API_BASE_URL`: Base URL for your tenant, e.g. `https://tenant.powerp.app/rt-api/api/` (optional; default used in samples).
+
+Set variables per shell:
+- Bash: `export POWERP_API_KEY=your_token` and optionally `export POWERP_API_BASE_URL=https://tenant.powerp.app/rt-api/api/`
+- PowerShell: `$env:POWERP_API_KEY='your_token'` and `$env:POWERP_API_BASE_URL='https://tenant.powerp.app/rt-api/api/'`
+
 ## API Description
 
 The PowerP Real-Time API provides access to power plant measurement data. The relevant endpoints used in the sample are:
