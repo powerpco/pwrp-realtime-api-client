@@ -2,15 +2,16 @@
 using PowerP.Realtime.API.Client;
 
 // Configure credentials via environment variables to avoid committing secrets.
-var apiKey = Environment.GetEnvironmentVariable("POWERP_API_KEY");
-var baseUrl = Environment.GetEnvironmentVariable("POWERP_API_BASE_URL") ?? "https://tenant.powerp.app/rt-api/api/";
+var clientId = Environment.GetEnvironmentVariable("POWERP_CLIENT_ID");
+var clientSecret = Environment.GetEnvironmentVariable("POWERP_CLIENT_SECRET");
+var baseUrl = Environment.GetEnvironmentVariable("POWERP_API_BASE_URL") ?? "http://localhost:5000/api/";
 
-if (string.IsNullOrWhiteSpace(apiKey))
+if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
 {
-    throw new InvalidOperationException("Set POWERP_API_KEY before running the sample.");
+    throw new InvalidOperationException("Set POWERP_CLIENT_ID and POWERP_CLIENT_SECRET before running the sample.");
 }
 
-var client = new PowerPAPIClient(baseUrl, apiKey);
+var client = new PowerPAPIClient(baseUrl, clientId, clientSecret);
 
 // Fetch measurements metadata
 var measurements = await client.GetMeasurementsAsync();
