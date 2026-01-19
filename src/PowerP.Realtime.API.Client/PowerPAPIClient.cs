@@ -26,13 +26,19 @@ namespace PowerP.Realtime.API.Client
         private async Task EnsureAuthenticatedAsync()
         {
             if (!string.IsNullOrEmpty(_accessToken)) return;
-
-            var authRequest = new { clientId = _clientId, clientSecret = _clientSecret };
+            
+            var formData = new List<KeyValuePair<string, string>>
+            {
+                new("client_id", _clientId),
+                new("client_secret", _clientSecret),
+                new("grant_type", "client_credentials")
+            };
+            
             // Note: Adjust path if API prefixes change. Assuming base includes /api or logic handles it.
             // Based on other files, auth is at /api/v1/auth/token
             // If base url is http://locahost:5000/api, then path is v1/auth/token
-            
-            var response = await _httpClient.PostAsJsonAsync("v1/auth/token", authRequest);
+
+            var response = await _httpClient.PostAsync("v1/auth/token", new FormUrlEncodedContent(formData));
             response.EnsureSuccessStatusCode();
 
             var tokenData = await response.Content.ReadFromJsonAsync<AuthTokenDto>();
