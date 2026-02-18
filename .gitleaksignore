@@ -1,0 +1,3 @@
+# Known findings triaged 2026-02-18
+# Example/expired JWT token in Readme documentation
+5522ed6aa4296ac510468e48a72b337bc494bfc7:Readme.markdown:generic-api-key:52
