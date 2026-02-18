@@ -1,0 +1,15 @@
+title = "PowerP Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    '''node_modules/''',
+    '''vendor/''',
+    '''\.claude/''',
+    '''bin/Debug/''',
+    '''bin/Release/''',
+    '''Migrations/''',
+    '''testdata/''',
+]
