@@ -1,0 +1,4 @@
+# Default code owners — SOC 2 compliance (GH-8)
+# Every PR requires review from code owners before merge.
+
+* @felipevallejo
