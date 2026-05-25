@@ -79,9 +79,10 @@ To ensure optimal performance and stability when consuming the API, please adher
 
 ### 1. Authentication
 **POST** `/api/v1/auth/token`
-*   **Purpose**: Get a Bearer token.
-*   **Body**: `{ "clientId": "...", "clientSecret": "..." }`
-*   **Response**: `{ "accessToken": "...", "expiresIn": 3600 }`
+*   **Purpose**: Get a Bearer token (valid 1 hour).
+*   **Content-Type**: `application/x-www-form-urlencoded`
+*   **Body**: `client_id=...&client_secret=...&grant_type=client_credentials`
+*   **Response**: `{ "access_token": "...", "expires_in": 3600, "token_type": "Bearer" }`
 
 ### 2. Metadata
 **GET** `/api/v1/measurements`
@@ -102,3 +103,16 @@ To ensure optimal performance and stability when consuming the API, please adher
       "windowPeriod": "200ms" // Optional resampling window
     }
     ```
+
+### 4. Latest Value
+**POST** `/api/v1/query/latest`
+*   **Purpose**: Get the most recent value for each measurement in a single call. Efficient and recommended for periodic polling (e.g. every few seconds/minutes).
+*   **Body**:
+    ```json
+    {
+      "databaseId": 123,
+      "measurementIndexes": ["1001", "1002"]
+    }
+    ```
+*   **Response**: `[ { "index": 1001, "timestamp": "...", "value": 12.3 }, ... ]`
+*   **Notes**: Max 20 indexes per call. Optional `startTime`/`endTime` to bound the lookback window.
