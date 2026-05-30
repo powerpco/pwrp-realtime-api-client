@@ -56,7 +56,7 @@ dotnet run --project samples/csharp/PowerP.Realtime.API.Sample.csproj
 For production environments, the Base URL follows this pattern:
 **`https://{tenant}.powerp.app/rt-api/api/`**
 
-Replace `{tenant}` with your assigned tenant name (e.g., `hidroalto`, `termocandelaria`).
+Replace `{tenant}` with the tenant name assigned to you by the PowerP team (e.g., `acme`, `demo-hydro`).
 
 ---
 
