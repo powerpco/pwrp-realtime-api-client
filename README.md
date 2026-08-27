@@ -1,172 +1,304 @@
-# PowerP Real-Time API Client
+# PowerP Real-Time API — Client & Documentation
 
-**Date**: January 16, 2026
+The **PowerP Real-Time API** serves real-time and historical time-series data from your
+plants over a secure, multi-tenant HTTP API. This repository is both the **reference
+documentation** and a ready-to-use **.NET client library** with **C# and Python
+examples**.
 
-## Overview
-
-This repository contains the client library and sample code for the **PowerP Real-Time API**. It provides a robust, reusable .NET library for consuming high-frequency measurement data, along with examples in C# and Python.
-
-The client handles:
-- **Authentication**: Implements the **Client Credentials Flow** (OAuth2), automatically acquiring and refreshing Bearer tokens.
-- **Data Access**: Efficiently retrieves metadata and time-series data.
-- **Two query surfaces**: **v1** by explicit measurement index (up to 20 per call), and **v2** by semantic *selector* — describe what you want by its tags and get a whole site in one request.
-- **Optimization**: Demonstrates querying data in small blocks to ensure stability and performance.
-
----
-
-## Repository Structure
-
-- `src/PowerP.Realtime.API.Client/`: Reusable .NET 10.0 Class Library containing `PowerPAPIClient` and DTOs.
-- `samples/csharp/`: Console application demonstrating batched queries.
-- `samples/python/`: Jupyter notebook (`PowerPAPIClient.ipynb`) for Python integration.
+- **Base URL:** `https://{tenant}.powerp.app/rt-api/api/` — your team is given a
+  dedicated hostname (e.g. `acme.powerp.app`). Your credentials only work on it.
+- **Auth:** OAuth2 Client Credentials (RFC 6749), 1-hour bearer tokens.
+- **Two query surfaces:** **v2** (recommended) — ask by *meaning*; **v1** (deprecated) —
+  ask by explicit index.
 
 ---
 
-## Quick Start (C#)
+## Table of contents
 
-### 1. Prerequisites
-- .NET 10.0 SDK
-- Credentials provided by the PowerP Team.
+1. [Quick start](#quick-start)
+2. [Concepts](#concepts) — tenants, buckets, signals, selectors
+3. [Authentication](#authentication)
+4. [Discovering what you can query](#discovering-what-you-can-query)
+5. [Querying data (v2)](#querying-data-v2)
+6. [Response format](#response-format)
+7. [Errors & retries](#errors--retries)
+8. [Best practices](#best-practices)
+9. [The .NET client library](#the-net-client-library)
+10. [Samples](#samples)
+11. [v1 reference (deprecated)](#v1-reference-deprecated)
 
-### 2. Environment Setup
-Configure your credentials as environment variables to keep them secure:
+---
 
-**Bash:**
+## Quick start
+
+Three calls: authenticate, discover, query.
+
 ```bash
-export POWERP_CLIENT_ID="<your-client-id-guid>"
+BASE="https://acme.powerp.app/rt-api/api"     # your dedicated host
+DB=123                                          # your bucket id (provided by PowerP)
+
+# 1. Get a bearer token (valid 1 hour)
+TOKEN=$(curl -s -X POST "$BASE/v1/auth/token" \
+  -d grant_type=client_credentials \
+  -d client_id=$POWERP_CLIENT_ID \
+  -d client_secret=$POWERP_CLIENT_SECRET | jq -r .access_token)
+
+# 2. Discover the selector vocabulary for your bucket
+curl -s "$BASE/v2/databases/$DB/vocabulary" -H "Authorization: Bearer $TOKEN"
+
+# 3. Query the latest value of every inverter's active power, in one call
+curl -s -X POST "$BASE/v2/query/latest" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"databaseId":123,"selector":{"level":"inverter","signal":"active_power"}}'
+```
+
+---
+
+## Concepts
+
+| Term | Meaning |
+|---|---|
+| **Tenant** | Your organization — the isolation boundary. You only ever see your own data. |
+| **Bucket** (`databaseId`) | A named data space for one site or dataset. You query within a bucket. |
+| **Signal** | One measured series (a meter reading, an inverter value, a status word). |
+| **Selector** | A set of **tags** describing the signals you want, e.g. `{"level":"inverter","signal":"active_power"}`. The server resolves it to signals and runs the cheapest query. |
+
+**Why selectors (v2) instead of indexes (v1):** with v1 you list explicit signal
+indexes, up to 20 per call, and stitch results together. With v2 you describe *what* you
+want and get a whole site — thousands of signals — in **one request**. New integrations
+should use v2.
+
+---
+
+## Authentication
+
+OAuth2 **Client Credentials** flow. Send your `client_id` and `client_secret` as
+`application/x-www-form-urlencoded`:
+
+```
+POST /v1/auth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=...&client_secret=...
+```
+
+```json
+{ "access_token": "eyJ...", "expires_in": 3600, "token_type": "Bearer" }
+```
+
+Send the token on every request as `Authorization: Bearer <access_token>`. It is valid
+for **1 hour** — reuse it, don't request one per call.
+
+> **🔒 Host binding.** Your credentials are bound to your dedicated hostname. A token
+> request or query sent to a different tenant's host is rejected (`401`/`403`), even with
+> a valid secret. Always use the base URL PowerP gave you.
+
+---
+
+## Discovering what you can query
+
+A bucket's **vocabulary** lists every selector dimension and the values it takes. Call it
+first; build selectors from what it returns.
+
+```
+GET /v2/databases/{databaseId}/vocabulary
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "databaseId": 123,
+  "bucket": "acme-site1",
+  "signals": 502,
+  "dimensions": {
+    "site":   ["SITE1"],
+    "level":  ["inverter", "meter", "relay"],
+    "device": ["inv1", "inv2", "inv3", "meter1"],
+    "signal": ["active_power", "current_a", "voltage_ab", "frequency", "..."],
+    "class":  ["analog", "digital"]
+  }
+}
+```
+
+Any combination of these tags is a valid selector.
+
+---
+
+## Querying data (v2)
+
+### Range query — `POST /v2/query`
+
+```json
+{
+  "databaseId": 123,
+  "selector": { "level": "inverter", "signal": "active_power" },
+  "startTime": "2026-01-16T10:00:00Z",
+  "endTime":   "2026-01-16T11:00:00Z",
+  "resampleEvery": "1m",   // optional: aggregate into 1-minute windows; omit for raw points
+  "explain": false          // optional: true returns the plan only, without moving data
+}
+```
+
+- **`selector`** — the tags to match. An empty selector `{}` matches the whole bucket.
+- **`resampleEvery`** — a window like `1m`, `5m`, `1h`. Each signal is aggregated with the
+  aggregation that suits it (a counter is summed, a measurement is averaged). Omit for raw
+  points.
+- **`explain`** — set `true` to see how many series a selector resolves to *before*
+  running it. Use it to size a broad selector.
+- **`decode`** — set `true` to expand status/bit-field signals into named conditions.
+
+### Latest value — `POST /v2/query/latest`
+
+The most recent value of every series a selector resolves to — the polling pattern, in
+one call. No time window needed.
+
+```json
+{ "databaseId": 123, "selector": { "level": "inverter", "signal": "active_power" } }
+```
+
+### Sizing with `explain`
+
+```json
+{ "databaseId": 123, "selector": { "level": "inverter" }, "explain": true }
+```
+
+```json
+{ "query": { "plan": "Batched", "seriesRequested": 168, "roundtrips": 2, "elapsedMs": 12 } }
+```
+
+---
+
+## Response format
+
+```json
+{
+  "query": {
+    "plan": "Equalities",     // how the server resolved it: Equalities | Regex | Batched
+    "roundtrips": 1,
+    "seriesRequested": 3,
+    "seriesReturned": 3,
+    "elapsedMs": 43
+  },
+  "points": [
+    {
+      "streamKey": 8401,
+      "tag": "inv1/active_power",
+      "timestamp": "2026-01-16T10:00:30Z",
+      "value": 312.5,
+      "decoded": null           // present only for status signals queried with decode=true
+    }
+  ]
+}
+```
+
+- **`points`** are flat: each carries its `tag` and `streamKey` so you can attribute it to
+  a signal. A range query returns many points per series; `latest` returns one.
+- **`query`** is the execution report — useful for logging and for `explain`.
+
+---
+
+## Errors & retries
+
+Standard HTTP status codes; bodies are `application/problem+json`.
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `400` | Malformed request — bad selector, too many tags, invalid duration | Fix the request; do not retry as-is |
+| `401` | Missing/expired/invalid token, or **wrong host** | Re-authenticate; check you are using your own base URL |
+| `403` | Authenticated but not allowed this resource | Check the `databaseId` belongs to you |
+| `404` | Unknown bucket | Check the `databaseId` |
+| `429` | Rate limit exceeded | **Back off** and retry (exponential) |
+| `504` | The historian did not answer in time | Retry; narrow the time window or selector |
+
+Implement **exponential backoff** for `429` and `5xx`. A `400`/`403`/`404` is a request
+problem — fix it rather than retrying.
+
+---
+
+## Best practices
+
+1. **Prefer v2 selectors.** One request per site instead of many. Use `explain` to size a
+   broad selector before pulling it.
+2. **Reuse the token** for its full hour; don't authenticate per call.
+3. **Reuse one HTTP client** (or one `PowerPAPIClient`) for your process lifetime to avoid
+   socket exhaustion.
+4. **Poll with `/v2/query/latest`**, not a tight range query.
+5. **Bound raw ranges.** For raw (non-resampled) data keep windows modest; for long ranges
+   use `resampleEvery`.
+6. **Back off** on `429`/`5xx`.
+7. **Protect your secret.** Environment variables or a secret manager — never in source
+   control or logs. Use your dedicated host.
+
+---
+
+## The .NET client library
+
+`src/PowerP.Realtime.API.Client` (.NET 10) wraps auth, token refresh, and both query
+surfaces.
+
+```csharp
+using PowerP.Realtime.API.Client;
+
+var client = new PowerPAPIClient(
+    baseUrl: "https://acme.powerp.app/rt-api/api/",
+    clientId: Environment.GetEnvironmentVariable("POWERP_CLIENT_ID")!,
+    clientSecret: Environment.GetEnvironmentVariable("POWERP_CLIENT_SECRET")!);
+
+// Discover
+var vocab = await client.GetVocabularyAsync(databaseId: 123);
+Console.WriteLine(string.Join(", ", vocab.Dimensions["level"]));
+
+// Latest value across all inverters, one call
+var latest = await client.QuerySelectorLatestAsync(
+    databaseId: 123,
+    selector: new() { ["level"] = "inverter", ["signal"] = "active_power" });
+foreach (var p in latest.Points)
+    Console.WriteLine($"{p.Tag} = {p.Value} @ {p.Timestamp:o}");
+
+// Range query, 1-minute resample
+var series = await client.QuerySelectorAsync(
+    databaseId: 123,
+    selector: new() { ["level"] = "meter" },
+    startTime: DateTime.UtcNow.AddHours(-1),
+    endTime: DateTime.UtcNow,
+    resampleEvery: "1m");
+```
+
+---
+
+## Samples
+
+- **`samples/python/query_v2.py`** — discover the vocabulary, run a selector range query,
+  and poll latest values. Only `requests` is needed.
+- **`samples/csharp/`** — a console app using the client library end to end.
+
+Both read credentials from the environment:
+
+```bash
+export POWERP_API_BASE_URL="https://acme.powerp.app/rt-api/api/"
+export POWERP_CLIENT_ID="<your-client-id>"
 export POWERP_CLIENT_SECRET="<your-client-secret>"
-# Optional: defaults to production if unset, or localhost for dev
-export POWERP_API_BASE_URL="http://localhost:5000/api/" 
 ```
 
-**PowerShell:**
-```powershell
-$env:POWERP_CLIENT_ID="<your-client-id-guid>"
-$env:POWERP_CLIENT_SECRET="<your-client-secret>"
-$env:POWERP_API_BASE_URL="http://localhost:5000/api/"
-```
-
-### 3. Running the Sample
 ```bash
+python3 samples/python/query_v2.py
 dotnet run --project samples/csharp/PowerP.Realtime.API.Sample.csproj
 ```
 
 ---
 
-## Production URL
-For production environments, the Base URL follows this pattern:
-**`https://{tenant}.powerp.app/rt-api/api/`**
+## v1 reference (deprecated)
 
-Replace `{tenant}` with the tenant name assigned to you by the PowerP team (e.g., `acme`, `demo-hydro`).
+> **Deprecated.** v1 still works and existing integrations are unaffected, but it is
+> frozen and will be retired. v1 responses carry a `Deprecation: true` header. **Build new
+> integrations on v2.**
 
----
+v1 queries by explicit measurement index, **max 20 per call**.
 
-## Best Practices
-To ensure optimal performance and stability when consuming the API, please adhere to these guidelines:
+- `POST /v1/query` — time-series by index, with optional `aggFunction` and `windowPeriod`.
+  Body: `{ "databaseId", "measurementIndexes": ["1001","1002"], "startTime", "endTime", "aggFunction", "windowPeriod" }`
+- `POST /v1/query/latest` — latest value per index. Body: `{ "databaseId", "measurementIndexes" }`
+- `GET /v1/measurements` — list signals.
 
-1.  **Block Size (v1)**: On the v1 index path, request **5 to 10 signals per query** and never exceed 20 in a single request. This limit does **not** apply to the v2 selector query, which resolves and batches a whole site server-side — use it for broad reads, and call it with `explain: true` first to size the result.
-2.  **Time Windows**: For raw data queries, keep the time window **under 30 minutes**. For larger ranges, perform multiple requests or use aggregated data.
-3.  **Error Handling**:
-    *   Validate HTTP responses (e.g., `response.EnsureSuccessStatusCode()`).
-    *   Implement **Exponential Backoff** for `429 Too Many Requests` or `5xx Server Errors`.
-4.  **Security**:
-    *   **Never** commit credentials to source control. Use environment variables or secure vaults.
-    *   Do not log full tokens or sensitive payloads.
-5.  **Connection Pooling**: Reuse the `HttpClient` (or `PowerPAPIClient`) instance for the lifetime of your application to prevent socket exhaustion.
-
----
-
-## API Reference
-
-### 1. Authentication
-**POST** `/api/v1/auth/token`
-*   **Purpose**: Get a Bearer token (valid 1 hour).
-*   **Content-Type**: `application/x-www-form-urlencoded`
-*   **Body**: `client_id=...&client_secret=...&grant_type=client_credentials`
-*   **Response**: `{ "access_token": "...", "expires_in": 3600, "token_type": "Bearer" }`
-
-### 2. Metadata
-**GET** `/api/v1/measurements`
-*   **Purpose**: List all available signals/measurements.
-*   **Headers**: `Authorization: Bearer <token>`
-
-### 3. Data Query
-**POST** `/api/v1/query`
-*   **Purpose**: Get time-series values.
-*   **Body**:
-    ```json
-    {
-      "databaseId": 123,
-      "measurementIndexes": ["1001", "1002"],
-      "startTime": "2026-01-16T10:00:00Z",
-      "endTime": "2026-01-16T10:15:00Z",
-      "aggFunction": "mean", // or "last", "max", etc.
-      "windowPeriod": "200ms" // Optional resampling window
-    }
-    ```
-
-### 4. Latest Value
-**POST** `/api/v1/query/latest`
-*   **Purpose**: Get the most recent value for each measurement in a single call. Efficient and recommended for periodic polling (e.g. every few seconds/minutes).
-*   **Body**:
-    ```json
-    {
-      "databaseId": 123,
-      "measurementIndexes": ["1001", "1002"]
-    }
-    ```
-*   **Response**: `[ { "index": 1001, "timestamp": "...", "value": 12.3 }, ... ]`
-*   **Notes**: Max 20 indexes per call. Optional `startTime`/`endTime` to bound the lookback window.
-
----
-
-## API Reference — v2 (Selector Query)
-
-v2 is additive: v1 stays exactly as documented above. The difference is how you ask for
-data. Instead of enumerating measurement indexes (and staying under 20 per call), you
-describe what you want by its **semantic tags** and the server resolves it to series and
-compiles the cheapest query. **A whole site of thousands of signals is a single
-request.**
-
-### Selector Query
-**POST** `/api/v2/query`
-*   **Purpose**: Query by meaning. The `selector` is a set of tag dimensions the
-    catalogue exposes for your tenant (e.g. `site`, `level`, `signal`). Ask the PowerP
-    team for your bucket's vocabulary.
-*   **Body**:
-    ```json
-    {
-      "databaseId": 123,
-      "selector": { "site": "SITE01", "level": "inverter", "signal": "active_power" },
-      "startTime": "2026-01-16T10:00:00Z",
-      "endTime": "2026-01-16T11:00:00Z",
-      "resampleEvery": "1m",   // optional aggregation window; omit for raw points
-      "explain": false          // true → return the plan only, do not execute
-    }
-    ```
-*   **Response**:
-    ```json
-    {
-      "query": {
-        "plan": "Equalities",     // or "Regex" / "Batched"
-        "roundtrips": 1,
-        "seriesRequested": 78,
-        "seriesReturned": 78,
-        "elapsedMs": 43
-      },
-      "points": [
-        { "streamKey": 1001, "tag": "SITE01/inverter-01/active_power",
-          "timestamp": "2026-01-16T10:00:30Z", "value": 12.3, "decoded": null }
-      ]
-    }
-    ```
-*   **Notes**:
-    *   An **empty selector** (`{}`) matches the whole bucket. Use `explain: true` first
-        to see how many series it resolves to before pulling the data.
-    *   Signals with a decode profile (a bit-field or status word) carry a `decoded`
-        object alongside the raw `value`.
-
-### Sizing a query with `explain`
-Set `"explain": true` to get the `query` plan back **without moving any data**. It tells
-you how many series the selector resolves to and how the server will run it — the way to
-check a broad selector before committing to it.
+The v2 equivalents (`/v2/query`, `/v2/query/latest`, `/v2/.../vocabulary`) supersede all
+three.

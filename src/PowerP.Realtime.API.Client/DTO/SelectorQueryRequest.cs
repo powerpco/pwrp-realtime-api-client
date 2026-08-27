@@ -37,4 +37,8 @@ public class SelectorQueryRequest
     /// </summary>
     [JsonPropertyName("explain")]
     public bool Explain { get; set; }
+
+    /// <summary>Expand bit-field / status signals into named conditions alongside the raw value.</summary>
+    [JsonPropertyName("decode")]
+    public bool Decode { get; set; }
 }

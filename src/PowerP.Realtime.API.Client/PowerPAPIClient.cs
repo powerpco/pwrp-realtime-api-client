@@ -132,5 +132,45 @@ namespace PowerP.Realtime.API.Client
             var data = await response.Content.ReadFromJsonAsync<SelectorQueryResponse>(options);
             return data ?? new SelectorQueryResponse();
         }
+
+        /// <summary>
+        /// The latest value for every series a selector resolves to — the polling pattern
+        /// in one call. No window: it reads the last point per series.
+        /// </summary>
+        public async Task<SelectorQueryResponse> QuerySelectorLatestAsync(
+            int databaseId, Dictionary<string, string> selector, bool decode = false)
+        {
+            await EnsureAuthenticatedAsync();
+
+            var payload = new SelectorQueryRequest
+            {
+                DatabaseId = databaseId,
+                Selector = selector ?? new Dictionary<string, string>(),
+                Decode = decode,
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("v2/query/latest", payload);
+            response.EnsureSuccessStatusCode();
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var data = await response.Content.ReadFromJsonAsync<SelectorQueryResponse>(options);
+            return data ?? new SelectorQueryResponse();
+        }
+
+        /// <summary>
+        /// The selector vocabulary of a bucket: the tag dimensions and their values. Call
+        /// it first to discover what a bucket can be queried by, then build selectors.
+        /// </summary>
+        public async Task<VocabularyResponse> GetVocabularyAsync(int databaseId)
+        {
+            await EnsureAuthenticatedAsync();
+
+            var response = await _httpClient.GetAsync($"v2/databases/{databaseId}/vocabulary");
+            response.EnsureSuccessStatusCode();
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var data = await response.Content.ReadFromJsonAsync<VocabularyResponse>(options);
+            return data ?? new VocabularyResponse();
+        }
     }
 }
