@@ -9,6 +9,7 @@ This repository contains the client library and sample code for the **PowerP Rea
 The client handles:
 - **Authentication**: Implements the **Client Credentials Flow** (OAuth2), automatically acquiring and refreshing Bearer tokens.
 - **Data Access**: Efficiently retrieves metadata and time-series data.
+- **Two query surfaces**: **v1** by explicit measurement index (up to 20 per call), and **v2** by semantic *selector* — describe what you want by its tags and get a whole site in one request.
 - **Optimization**: Demonstrates querying data in small blocks to ensure stability and performance.
 
 ---
@@ -63,7 +64,7 @@ Replace `{tenant}` with the tenant name assigned to you by the PowerP team (e.g.
 ## Best Practices
 To ensure optimal performance and stability when consuming the API, please adhere to these guidelines:
 
-1.  **Block Size**: Request data for **5 to 10 signals per query**. Never exceed 20 signals in a single request, as this helps prevent timeouts and reduces load.
+1.  **Block Size (v1)**: On the v1 index path, request **5 to 10 signals per query** and never exceed 20 in a single request. This limit does **not** apply to the v2 selector query, which resolves and batches a whole site server-side — use it for broad reads, and call it with `explain: true` first to size the result.
 2.  **Time Windows**: For raw data queries, keep the time window **under 30 minutes**. For larger ranges, perform multiple requests or use aggregated data.
 3.  **Error Handling**:
     *   Validate HTTP responses (e.g., `response.EnsureSuccessStatusCode()`).
@@ -116,3 +117,56 @@ To ensure optimal performance and stability when consuming the API, please adher
     ```
 *   **Response**: `[ { "index": 1001, "timestamp": "...", "value": 12.3 }, ... ]`
 *   **Notes**: Max 20 indexes per call. Optional `startTime`/`endTime` to bound the lookback window.
+
+---
+
+## API Reference — v2 (Selector Query)
+
+v2 is additive: v1 stays exactly as documented above. The difference is how you ask for
+data. Instead of enumerating measurement indexes (and staying under 20 per call), you
+describe what you want by its **semantic tags** and the server resolves it to series and
+compiles the cheapest query. **A whole site of thousands of signals is a single
+request.**
+
+### Selector Query
+**POST** `/api/v2/query`
+*   **Purpose**: Query by meaning. The `selector` is a set of tag dimensions the
+    catalogue exposes for your tenant (e.g. `site`, `level`, `signal`). Ask the PowerP
+    team for your bucket's vocabulary.
+*   **Body**:
+    ```json
+    {
+      "databaseId": 123,
+      "selector": { "site": "SITE01", "level": "inverter", "signal": "active_power" },
+      "startTime": "2026-01-16T10:00:00Z",
+      "endTime": "2026-01-16T11:00:00Z",
+      "resampleEvery": "1m",   // optional aggregation window; omit for raw points
+      "explain": false          // true → return the plan only, do not execute
+    }
+    ```
+*   **Response**:
+    ```json
+    {
+      "query": {
+        "plan": "Equalities",     // or "Regex" / "Batched"
+        "roundtrips": 1,
+        "seriesRequested": 78,
+        "seriesReturned": 78,
+        "elapsedMs": 43
+      },
+      "points": [
+        { "streamKey": 1001, "tag": "SITE01/inverter-01/active_power",
+          "timestamp": "2026-01-16T10:00:30Z", "value": 12.3, "decoded": null }
+      ]
+    }
+    ```
+*   **Notes**:
+    *   An **empty selector** (`{}`) matches the whole bucket. Use `explain: true` first
+        to see how many series it resolves to before pulling the data.
+    *   Signals with a decode profile (a bit-field or status word) carry a `decoded`
+        object alongside the raw `value`.
+
+### Sizing a query with `explain`
+Set `"explain": true` to get the `query` plan back **without moving any data**. It tells
+you how many series the selector resolves to and how the server will run it — the way to
+check a broad selector before committing to it.

@@ -96,5 +96,41 @@ namespace PowerP.Realtime.API.Client
             var data = await response.Content.ReadFromJsonAsync<List<MeasurementValueDto>>(options);
             return data ?? new List<MeasurementValueDto>();
         }
+
+        /// <summary>
+        /// v2 selector query. Describe what you want by its semantic tags and the server
+        /// resolves it to series and runs the cheapest plan — no need to enumerate
+        /// indexes or stay under the 20-signal block size the v1 path requires.
+        /// </summary>
+        /// <param name="selector">Semantic tags, e.g. { "site": "SITE01", "signal": "active_power" }.</param>
+        /// <param name="resampleEvery">Optional aggregation window (e.g. "1m"); null for raw points.</param>
+        /// <param name="explain">When true, returns the plan only, without executing it.</param>
+        public async Task<SelectorQueryResponse> QuerySelectorAsync(
+            int databaseId,
+            Dictionary<string, string> selector,
+            DateTime startTime,
+            DateTime endTime,
+            string? resampleEvery = null,
+            bool explain = false)
+        {
+            await EnsureAuthenticatedAsync();
+
+            var payload = new SelectorQueryRequest
+            {
+                DatabaseId = databaseId,
+                Selector = selector ?? new Dictionary<string, string>(),
+                StartTime = startTime,
+                EndTime = endTime,
+                ResampleEvery = resampleEvery,
+                Explain = explain
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("v2/query", payload);
+            response.EnsureSuccessStatusCode();
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var data = await response.Content.ReadFromJsonAsync<SelectorQueryResponse>(options);
+            return data ?? new SelectorQueryResponse();
+        }
     }
 }

@@ -61,3 +61,31 @@ foreach (var group in groups)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// v2 selector query: describe what you want by its tags, get a whole site in one
+// request. No 20-signal block size to work around. Replace the selector with your
+// bucket's vocabulary (ask the PowerP team) and databaseId.
+// ---------------------------------------------------------------------------
+Console.WriteLine("\n--- v2 selector query ---");
+var selector = new Dictionary<string, string>
+{
+    ["site"] = "SITE01",
+    ["level"] = "inverter",
+    ["signal"] = "active_power"
+};
+var v2End = DateTime.UtcNow;
+var v2Start = v2End - TimeSpan.FromHours(1);
+
+// Size it first: explain returns the plan without moving any data.
+var planned = await client.QuerySelectorAsync(databaseId: 1, selector, v2Start, v2End, explain: true);
+Console.WriteLine($"plan={planned.Query?.Plan} series={planned.Query?.SeriesRequested} " +
+                  $"roundtrips={planned.Query?.Roundtrips} elapsedMs={planned.Query?.ElapsedMs}");
+
+// Then run it.
+var v2 = await client.QuerySelectorAsync(databaseId: 1, selector, v2Start, v2End);
+Console.WriteLine($"Received {v2.Points.Count} points");
+foreach (var p in v2.Points.Take(5))
+{
+    Console.WriteLine($"  {p.Tag}  {p.Value}  {p.Timestamp:o}");
+}
