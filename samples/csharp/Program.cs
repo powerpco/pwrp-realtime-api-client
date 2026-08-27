@@ -1,91 +1,40 @@
-﻿using System.Linq;
 using PowerP.Realtime.API.Client;
 
-// Configure credentials via environment variables to avoid committing secrets.
+// Credentials come from the environment so nothing is committed.
 var clientId = Environment.GetEnvironmentVariable("POWERP_CLIENT_ID");
 var clientSecret = Environment.GetEnvironmentVariable("POWERP_CLIENT_SECRET");
 var baseUrl = Environment.GetEnvironmentVariable("POWERP_API_BASE_URL") ?? "http://localhost:5000/api/";
 
 if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
-{
-    throw new InvalidOperationException("Set POWERP_CLIENT_ID and POWERP_CLIENT_SECRET before running the sample.");
-}
+    throw new InvalidOperationException("Set POWERP_CLIENT_ID and POWERP_CLIENT_SECRET before running.");
 
+var databaseId = int.TryParse(Environment.GetEnvironmentVariable("POWERP_DATABASE_ID"), out var db) ? db : 1;
+
+// Reuse one client for the process lifetime (it caches the token and the HttpClient).
 var client = new PowerPAPIClient(baseUrl, clientId, clientSecret);
 
-// Fetch measurements metadata
-var measurements = await client.GetMeasurementsAsync();
+// 1. Discover: what can this bucket be queried by?
+var vocab = await client.GetVocabularyAsync(databaseId);
+Console.WriteLine($"Bucket '{vocab.Bucket}' — {vocab.Signals} signals");
+foreach (var (dimension, values) in vocab.Dimensions)
+    Console.WriteLine($"  {dimension}: {string.Join(", ", values.Take(8))}");
 
-// Group by database and default aggregation to keep queries consistent.
-var groups = measurements
-    .GroupBy(row => new { row.DatabaseId, row.DefaultAgg });
+// Build a selector from the vocabulary. This is a placeholder — adjust to your bucket.
+var selector = new Dictionary<string, string> { ["level"] = "inverter", ["signal"] = "active_power" };
 
-// Use small chunks to avoid overwhelming the API. Upper bound is 20.
-const int requestedBlockSize = 10;
-const int maxBlockSize = 20;
-var blockSize = Math.Min(requestedBlockSize, maxBlockSize);
-var lookback = TimeSpan.FromMinutes(15); // Raw data must be under 30 minutes.
+// 2. Size it first: explain returns the plan without moving data.
+var plan = await client.QuerySelectorAsync(
+    databaseId, selector, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, explain: true);
+Console.WriteLine($"\nplan={plan.Query?.Plan} series={plan.Query?.SeriesRequested} " +
+                  $"roundtrips={plan.Query?.Roundtrips}");
 
-foreach (var group in groups)
-{
-    Console.WriteLine($"\nDatabase ID: {group.Key.DatabaseId}, Aggregation: {group.Key.DefaultAgg}");
-    var measurementRows = group.ToList();
+// 3. Latest value per series — the polling pattern, one call.
+var latest = await client.QuerySelectorLatestAsync(databaseId, selector);
+Console.WriteLine($"\nlatest: {latest.Points.Count} series");
+foreach (var p in latest.Points.Take(8))
+    Console.WriteLine($"  {p.Tag} = {p.Value} @ {p.Timestamp:o}");
 
-    var endTime = DateTime.UtcNow;
-    var startTime = endTime - lookback;
-
-    for (var start = 0; start < measurementRows.Count; start += blockSize)
-    {
-        var block = measurementRows.Skip(start).Take(blockSize).ToList();
-        var indexes = block.Select(row => row.Index.ToString()).ToList();
-        Console.WriteLine($"Processing block {start / blockSize + 1} with {block.Count} measurements");
-
-        var data = await client.GetMeasurementDataAsync(
-            group.Key.DatabaseId,
-            indexes,
-            startTime,
-            endTime,
-            group.Key.DefaultAgg,
-            "200ms");
-
-        if (data.Count == 0)
-        {
-            Console.WriteLine($"No data received for block {start / blockSize + 1}");
-            continue;
-        }
-
-        Console.WriteLine($"Received {data.Count} data points for block {start / blockSize + 1}");
-        foreach (var item in data)
-        {
-            Console.WriteLine($"Measurement: {item.Index}, Value: {item.Value}, Timestamp: {item.Timestamp:o}");
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// v2 selector query: describe what you want by its tags, get a whole site in one
-// request. No 20-signal block size to work around. Replace the selector with your
-// bucket's vocabulary (ask the PowerP team) and databaseId.
-// ---------------------------------------------------------------------------
-Console.WriteLine("\n--- v2 selector query ---");
-var selector = new Dictionary<string, string>
-{
-    ["site"] = "SITE01",
-    ["level"] = "inverter",
-    ["signal"] = "active_power"
-};
-var v2End = DateTime.UtcNow;
-var v2Start = v2End - TimeSpan.FromHours(1);
-
-// Size it first: explain returns the plan without moving any data.
-var planned = await client.QuerySelectorAsync(databaseId: 1, selector, v2Start, v2End, explain: true);
-Console.WriteLine($"plan={planned.Query?.Plan} series={planned.Query?.SeriesRequested} " +
-                  $"roundtrips={planned.Query?.Roundtrips} elapsedMs={planned.Query?.ElapsedMs}");
-
-// Then run it.
-var v2 = await client.QuerySelectorAsync(databaseId: 1, selector, v2Start, v2End);
-Console.WriteLine($"Received {v2.Points.Count} points");
-foreach (var p in v2.Points.Take(5))
-{
-    Console.WriteLine($"  {p.Tag}  {p.Value}  {p.Timestamp:o}");
-}
+// 4. Range query, resampled to 5-minute windows.
+var series = await client.QuerySelectorAsync(
+    databaseId, selector, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, resampleEvery: "5m");
+Console.WriteLine($"\nrange: {series.Points.Count} points");
