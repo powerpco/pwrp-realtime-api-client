@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using PowerP.Realtime.API.Client.DTO;
 
 namespace PowerP.Realtime.API.Client
@@ -23,6 +24,42 @@ namespace PowerP.Realtime.API.Client
             };
         }
 
+        /// <summary>
+        /// Unset optionals are omitted rather than sent as null. A server field that is not
+        /// nullable cannot bind a null, so serialising every unset property turned an
+        /// ordinary call into a 400 whose detail this client then discarded.
+        /// </summary>
+        /// <summary>
+        /// Throws with the server's own explanation rather than a bare status code.
+        /// Refusals carry a stable <c>code</c> and the numbers behind them; discarding the
+        /// body left an integrator with "400 Bad Request" and nothing to act on.
+        /// </summary>
+        private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+        {
+            if (response.IsSuccessStatusCode) return;
+
+            var body = await response.Content.ReadAsStringAsync();
+            string? code = null, detail = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("code", out var c)) code = c.GetString();
+                if (doc.RootElement.TryGetProperty("detail", out var d)) detail = d.GetString();
+            }
+            catch (JsonException) { /* not a problem document; the raw body is still useful */ }
+
+            var explanation = detail ?? (string.IsNullOrWhiteSpace(body) ? "(no body)" : body);
+            throw new HttpRequestException(
+                $"{(int)response.StatusCode} {response.ReasonPhrase}" +
+                $"{(code is null ? "" : $" [{code}]")}: {explanation}",
+                null, response.StatusCode);
+        }
+
+        private static readonly JsonSerializerOptions RequestJson = new(JsonSerializerDefaults.Web)
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
+
         private async Task EnsureAuthenticatedAsync()
         {
             if (!string.IsNullOrEmpty(_accessToken)) return;
@@ -39,7 +76,7 @@ namespace PowerP.Realtime.API.Client
             // If base url is http://locahost:5000/api, then path is v1/auth/token
 
             var response = await _httpClient.PostAsync("v1/auth/token", new FormUrlEncodedContent(formData));
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var tokenData = await response.Content.ReadFromJsonAsync<AuthTokenDto>();
             if (tokenData != null)
@@ -55,7 +92,7 @@ namespace PowerP.Realtime.API.Client
         {
             await EnsureAuthenticatedAsync();
             var response = await _httpClient.GetAsync("v1/measurements"); 
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var measurements = await response.Content.ReadFromJsonAsync<List<MeasurementDto>>(options);
             return measurements ?? new List<MeasurementDto>();
@@ -90,7 +127,7 @@ namespace PowerP.Realtime.API.Client
             // QueryController maps to api/v1/Query (controller name).
             
             var response = await _httpClient.PostAsJsonAsync("v1/Query", payload);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var data = await response.Content.ReadFromJsonAsync<List<MeasurementValueDto>>(options);
@@ -146,8 +183,8 @@ namespace PowerP.Realtime.API.Client
                 Explain = explain
             };
 
-            var response = await _httpClient.PostAsJsonAsync("v2/query", payload);
-            response.EnsureSuccessStatusCode();
+            var response = await _httpClient.PostAsJsonAsync("v2/query", payload, RequestJson);
+            await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var data = await response.Content.ReadFromJsonAsync<SelectorQueryResponse>(options);
@@ -170,8 +207,8 @@ namespace PowerP.Realtime.API.Client
                 Decode = decode,
             };
 
-            var response = await _httpClient.PostAsJsonAsync("v2/query/latest", payload);
-            response.EnsureSuccessStatusCode();
+            var response = await _httpClient.PostAsJsonAsync("v2/query/latest", payload, RequestJson);
+            await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var data = await response.Content.ReadFromJsonAsync<SelectorQueryResponse>(options);
@@ -187,7 +224,7 @@ namespace PowerP.Realtime.API.Client
             await EnsureAuthenticatedAsync();
 
             var response = await _httpClient.GetAsync($"v2/databases/{databaseId}/vocabulary");
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var data = await response.Content.ReadFromJsonAsync<VocabularyResponse>(options);
