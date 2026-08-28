@@ -103,14 +103,27 @@ namespace PowerP.Realtime.API.Client
         /// indexes or stay under the 20-signal block size the v1 path requires.
         /// </summary>
         /// <param name="selector">Semantic tags, e.g. { "site": "SITE01", "signal": "active_power" }.</param>
-        /// <param name="resampleEvery">Optional aggregation window (e.g. "1m"); null for raw points.</param>
+        /// <param name="resampleEvery">Aggregation window (e.g. "1m"); null for raw points.</param>
+        /// <param name="maxDataPoints">Points wanted per series; the server derives the
+        /// window. Ignored when <paramref name="resampleEvery"/> is given.</param>
+        /// <param name="minInterval">Floor for a derived window, e.g. "1s".</param>
+        /// <param name="aggFunction">Aggregation to apply; null uses each signal's own.</param>
         /// <param name="explain">When true, returns the plan only, without executing it.</param>
+        /// <remarks>
+        /// With neither <paramref name="resampleEvery"/> nor <paramref name="maxDataPoints"/>
+        /// you get raw points. A range too wide for that is refused with 400 rather than
+        /// quietly aggregated, so check <see cref="QueryPlanInfo.Aggregated"/> on the way
+        /// back rather than assuming.
+        /// </remarks>
         public async Task<SelectorQueryResponse> QuerySelectorAsync(
             int databaseId,
             Dictionary<string, string> selector,
             DateTime startTime,
             DateTime endTime,
             string? resampleEvery = null,
+            int? maxDataPoints = null,
+            string? minInterval = null,
+            string? aggFunction = null,
             bool explain = false)
         {
             await EnsureAuthenticatedAsync();
@@ -122,6 +135,9 @@ namespace PowerP.Realtime.API.Client
                 StartTime = startTime,
                 EndTime = endTime,
                 ResampleEvery = resampleEvery,
+                MaxDataPoints = maxDataPoints,
+                MinInterval = minInterval,
+                AggFunction = aggFunction,
                 Explain = explain
             };
 

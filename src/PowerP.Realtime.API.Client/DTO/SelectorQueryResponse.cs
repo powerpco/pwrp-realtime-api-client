@@ -35,6 +35,29 @@ public class QueryPlanInfo
 
     [JsonPropertyName("elapsedMs")]
     public long ElapsedMs { get; set; }
+
+    /// <summary>
+    /// Whether these points went through an aggregation window. Check it. Aggregated
+    /// timestamps sit on window boundaries, not on the instants the values were measured
+    /// at, and nothing else in the payload distinguishes the two.
+    /// </summary>
+    [JsonPropertyName("aggregated")]
+    public bool Aggregated { get; set; }
+
+    /// <summary>The window actually applied, or null when the points are raw. Echoed even
+    /// when you supplied it, because the server may have derived it instead.</summary>
+    [JsonPropertyName("resampleEvery")]
+    public string? ResampleEvery { get; set; }
+
+    /// <summary>The aggregation applied, or "mixed" when signals used their own declared
+    /// aggregations. Null when raw.</summary>
+    [JsonPropertyName("aggFunction")]
+    public string? AggFunction { get; set; }
+
+    /// <summary>Where the window came from: "raw", "explicit", "maxDataPoints" or
+    /// "latest".</summary>
+    [JsonPropertyName("windowSource")]
+    public string? WindowSource { get; set; }
 }
 
 public class SelectorPoint

@@ -89,9 +89,30 @@ def main():
         "databaseId": DATABASE_ID, "selector": SELECTOR,
         "startTime": iso(start), "endTime": iso(end), "resampleEvery": "5m",
     })
-    print(f"range: {len(ranged['points'])} points")
+    q = ranged["query"]
+    print(f"range: {len(ranged['points'])} points "
+          f"(aggregated={q['aggregated']} every={q['resampleEvery']} via {q['windowSource']})")
 
-    # 4. Latest value per series — the polling pattern, one call.
+    # 4. Raw points: no window at all, so every timestamp is the instant the value was
+    #    recorded. This is what you want for states, alarms and setpoints, where a value
+    #    moved to a window boundary is reported earlier than it happened.
+    #    Raw is bounded: too wide a range or too many signals is refused with 400 rather
+    #    than quietly aggregated, so keep the window narrow.
+    raw = post("/v2/query", {
+        "databaseId": DATABASE_ID, "selector": SELECTOR,
+        "startTime": iso(end - timedelta(minutes=5)), "endTime": iso(end),
+    })
+    print(f"raw: {len(raw['points'])} points (aggregated={raw['query']['aggregated']})")
+
+    # 5. Let the server size the window: ask for a point budget instead of guessing.
+    budgeted = post("/v2/query", {
+        "databaseId": DATABASE_ID, "selector": SELECTOR,
+        "startTime": iso(start), "endTime": iso(end), "maxDataPoints": 200,
+    })
+    print(f"budgeted: {len(budgeted['points'])} points "
+          f"at every={budgeted['query']['resampleEvery']}")
+
+    # 6. Latest value per series — the polling pattern, one call.
     latest = post("/v2/query/latest", {"databaseId": DATABASE_ID, "selector": SELECTOR})
     print(f"latest: {len(latest['points'])} series")
     for p in latest["points"][:8]:

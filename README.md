@@ -23,9 +23,10 @@ examples**.
 6. [Response format](#response-format)
 7. [Errors & retries](#errors--retries)
 8. [Best practices](#best-practices)
-9. [The .NET client library](#the-net-client-library)
-10. [Samples](#samples)
-11. [v1 reference (deprecated)](#v1-reference-deprecated)
+9. [The OpenAPI schema](#the-openapi-schema)
+10. [The .NET client library](#the-net-client-library)
+11. [Samples](#samples)
+12. [v1 reference (deprecated)](#v1-reference-deprecated)
 
 ---
 
@@ -142,10 +143,35 @@ Any combination of these tags is a valid selector.
 - **`selector`** — the tags to match. An empty selector `{}` matches the whole bucket.
 - **`resampleEvery`** — a window like `1m`, `5m`, `1h`. Each signal is aggregated with the
   aggregation that suits it (a counter is summed, a measurement is averaged). Omit for raw
-  points.
+  points. `windowPeriod` is accepted as an older spelling of the same field.
+- **`maxDataPoints`** — instead of choosing a window, say how many points you want per
+  series and the server derives the window that fits. The response tells you which one it
+  used. Ignored when `resampleEvery` is given.
+- **`minInterval`** — a floor for a derived window, e.g. `"1s"`. Set it to your source's
+  real cadence so no window claims resolution the instrument never produced.
+- **`aggFunction`** — `mean`, `last`, `max`, `sum`… Omit and each signal uses the
+  aggregation declared for it in the catalogue.
+- **`raw`** — `true` asks for raw points explicitly. Same result as omitting the window,
+  but it says so out loud; combining it with `resampleEvery` is a `400` rather than a guess.
 - **`explain`** — set `true` to see how many series a selector resolves to *before*
   running it. Use it to size a broad selector.
 - **`decode`** — set `true` to expand status/bit-field signals into named conditions.
+
+#### Raw or aggregated
+
+**With no `resampleEvery` and no `maxDataPoints` you get raw points**: the values as they
+were recorded, each keeping the instant it was measured at.
+
+That default exists because aggregation is the lossy choice. Aggregated points are stamped
+on window boundaries, not on the instants the values occurred at, so a state change, an
+alarm or a setpoint move is reported at the edge of its window — earlier than it happened,
+and always in the same direction. For anything where *when* is part of the datum, use raw.
+
+Raw over a wide range is expensive, so it is **bounded and refused rather than silently
+downgraded**: past the limit you get a `400` telling you the maximum, not a quietly
+aggregated series that looks raw. Current limits are **3 h** of range and **500 signals**
+per raw request. Beyond either, narrow the request or pass `resampleEvery` /
+`maxDataPoints` and aggregate on purpose.
 
 ### Latest value — `POST /v2/query/latest`
 
@@ -177,7 +203,11 @@ one call. No time window needed.
     "roundtrips": 1,
     "seriesRequested": 3,
     "seriesReturned": 3,
-    "elapsedMs": 43
+    "elapsedMs": 43,
+    "aggregated": false,      // did these points go through an aggregation window?
+    "resampleEvery": null,    // the window actually applied; null when raw
+    "aggFunction": null,      // what was applied, or "mixed"; null when raw
+    "windowSource": "raw"     // raw | explicit | maxDataPoints | latest
   },
   "points": [
     {
@@ -191,9 +221,21 @@ one call. No time window needed.
 }
 ```
 
-- **`points`** are flat: each carries its `tag` and `streamKey` so you can attribute it to
-  a signal. A range query returns many points per series; `latest` returns one.
+- **`points`** are **flat** — one object per point, not a series with nested points, and
+  `streamKey` is a **number**. Each point carries its `tag` and `streamKey` so you can
+  attribute it to a signal without a catalogue lookup. A range query returns many points
+  per series; `latest` returns one.
 - **`query`** is the execution report — useful for logging and for `explain`.
+- **`query.aggregated`** is the field to check before you trust a timestamp. `false` means
+  the instants are the real ones; `true` means they are window boundaries and
+  `query.resampleEvery` tells you how wide. Do not infer this from what you asked for: the
+  server may have derived a window you did not name.
+
+> **Bind against the schema, not against this example.** The full request and response
+> models are published as OpenAPI (see [The OpenAPI schema](#the-openapi-schema)).
+> Generating your model is worth the five minutes: a hand-written one that mismatches
+> deserialises to nulls without raising anything, and an empty result is indistinguishable
+> from a plant that is genuinely idle.
 
 ---
 
@@ -204,6 +246,7 @@ Standard HTTP status codes; bodies are `application/problem+json`.
 | Status | Meaning | What to do |
 |---|---|---|
 | `400` | Malformed request — bad selector, too many tags, invalid duration | Fix the request; do not retry as-is |
+| `400` | Raw range or signal count over the limit | Narrow it, or pass `resampleEvery`/`maxDataPoints`. The message states the maximum |
 | `401` | Missing/expired/invalid token, or **wrong host** | Re-authenticate; check you are using your own base URL |
 | `403` | Authenticated but not allowed this resource | Check the `databaseId` belongs to you |
 | `404` | Unknown bucket | Check the `databaseId` |
@@ -223,11 +266,40 @@ problem — fix it rather than retrying.
 3. **Reuse one HTTP client** (or one `PowerPAPIClient`) for your process lifetime to avoid
    socket exhaustion.
 4. **Poll with `/v2/query/latest`**, not a tight range query.
-5. **Bound raw ranges.** For raw (non-resampled) data keep windows modest; for long ranges
-   use `resampleEvery`.
-6. **Back off** on `429`/`5xx`.
-7. **Protect your secret.** Environment variables or a secret manager — never in source
+5. **Bound raw ranges.** Raw is the default and is capped; for long ranges pass
+   `resampleEvery`, or `maxDataPoints` and let the server pick the window.
+6. **Check `query.aggregated`** before treating a timestamp as an instant.
+7. **Generate your models from the OpenAPI schema** rather than hand-writing them.
+8. **Back off** on `429`/`5xx`.
+9. **Protect your secret.** Environment variables or a secret manager — never in source
    control or logs. Use your dedicated host.
+
+---
+
+## The OpenAPI schema
+
+The full contract — every endpoint, request and response model — is published as OpenAPI
+3, and it is the authoritative description of the API. This document explains it; the
+schema defines it.
+
+```
+https://<your-host>/rt-api/swagger/v2/swagger.json    # v2
+https://<your-host>/rt-api/swagger/v1/swagger.json    # v1, deprecated
+```
+
+No authentication is needed to read it. Point your generator at it rather than
+transcribing models by hand:
+
+```bash
+# example: a Python client
+openapi-generator-cli generate -i https://<your-host>/rt-api/swagger/v2/swagger.json \
+  -g python -o ./powerp-client
+```
+
+A hand-written model that does not match is the failure mode worth avoiding: most JSON
+libraries bind unknown fields to nothing and missing fields to null without raising, so
+the call returns `200`, the object is well-formed, and every value is empty. That looks
+exactly like a site with no data.
 
 ---
 
@@ -261,7 +333,7 @@ var series = await client.QuerySelectorAsync(
     selector: new() { ["level"] = "meter" },
     startTime: DateTime.UtcNow.AddHours(-1),
     endTime: DateTime.UtcNow,
-    resampleEvery: "1m");
+    resampleEvery: "1m");   // or: maxDataPoints: 500, or neither for raw points
 ```
 
 ---
@@ -302,3 +374,17 @@ v1 queries by explicit measurement index, **max 20 per call**.
 
 The v2 equivalents (`/v2/query`, `/v2/query/latest`, `/v2/.../vocabulary`) supersede all
 three.
+
+### Two v1 behaviours worth knowing
+
+v1 is frozen, so these are documented rather than changed. Both are reasons to move to v2.
+
+- **`windowPeriod` omitted does not mean raw beyond 30 minutes.** v1 returns raw points
+  only when the range is **30 minutes or less**. Past that it aggregates automatically,
+  choosing the window from the range — a 31-minute query comes back binned to 1 s, with
+  nothing in the response saying so. v2 answers this by never aggregating unasked, and by
+  reporting `aggregated` and `resampleEvery` on every response.
+- **A non-numeric `measurementIndexes` entry is dropped silently.** Indexes that do not
+  parse as integers are discarded without an error; if every entry is dropped the call
+  returns `200` with an empty array. v2 selects by tags and reports what it resolved, so
+  an empty result and a bad request are no longer the same response.
