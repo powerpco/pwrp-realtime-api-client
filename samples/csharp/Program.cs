@@ -37,4 +37,19 @@ foreach (var p in latest.Points.Take(8))
 // 4. Range query, resampled to 5-minute windows.
 var series = await client.QuerySelectorAsync(
     databaseId, selector, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, resampleEvery: "5m");
-Console.WriteLine($"\nrange: {series.Points.Count} points");
+Console.WriteLine($"\nrange: {series.Points.Count} points "
+    + $"(aggregated={series.Query?.Aggregated} every={series.Query?.ResampleEvery})");
+
+// 5. Raw points: no window, so every timestamp is the instant the value was recorded.
+//    Use this for states, alarms and setpoints, where a value moved to a window boundary
+//    is reported earlier than it actually happened. Raw is bounded: too wide a range or
+//    too many signals is refused with 400 rather than quietly aggregated.
+var raw = await client.QuerySelectorAsync(
+    databaseId, selector, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
+Console.WriteLine($"raw: {raw.Points.Count} points (aggregated={raw.Query?.Aggregated})");
+
+// 6. Or state a point budget and let the server choose the window.
+var budgeted = await client.QuerySelectorAsync(
+    databaseId, selector, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, maxDataPoints: 200);
+Console.WriteLine($"budgeted: {budgeted.Points.Count} points "
+    + $"at every={budgeted.Query?.ResampleEvery}");
