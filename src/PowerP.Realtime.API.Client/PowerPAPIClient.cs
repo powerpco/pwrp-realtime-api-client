@@ -13,9 +13,20 @@ namespace PowerP.Realtime.API.Client
         private readonly string _clientSecret;
         private string? _accessToken;
 
+        /// <param name="baseUrl">
+        /// Your host's API root, e.g. <c>https://acme.powerp.app/rt-api/api</c>. A trailing
+        /// slash is added if missing.
+        /// </param>
         public PowerPAPIClient(string baseUrl, string clientId, string clientSecret)
         {
-            _baseUrl = baseUrl;
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new ArgumentException("A base URL is required.", nameof(baseUrl));
+
+            // Uri resolution against a BaseAddress without a trailing slash DROPS the last
+            // segment, so ".../rt-api/api" + "v1/auth/token" silently becomes
+            // ".../rt-api/v1/auth/token" — every call 401s or 404s and nothing says why.
+            // Normalising here means the caller cannot get it wrong.
+            _baseUrl = baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/";
             _clientId = clientId;
             _clientSecret = clientSecret;
             _httpClient = new HttpClient
@@ -148,6 +159,7 @@ namespace PowerP.Realtime.API.Client
         /// <param name="streamKeys">Pin an exact signal set by key; intersects with
         /// <paramref name="selector"/>. Prefer this for a scheduled ingest, where a
         /// re-tagged signal must not silently change what you collect.</param>
+        /// <param name="decode">Expand status and bit-field signals into named conditions.</param>
         /// <param name="explain">When true, returns the plan only, without executing it.</param>
         /// <remarks>
         /// With neither <paramref name="resampleEvery"/> nor <paramref name="maxDataPoints"/>
@@ -165,6 +177,7 @@ namespace PowerP.Realtime.API.Client
             string? minInterval = null,
             string? aggFunction = null,
             IEnumerable<int>? streamKeys = null,
+            bool decode = false,
             bool explain = false)
         {
             await EnsureAuthenticatedAsync();
@@ -174,6 +187,7 @@ namespace PowerP.Realtime.API.Client
                 DatabaseId = databaseId,
                 Selector = selector ?? new Dictionary<string, string>(),
                 StreamKeys = streamKeys?.ToList(),
+                Decode = decode,
                 StartTime = startTime,
                 EndTime = endTime,
                 ResampleEvery = resampleEvery,

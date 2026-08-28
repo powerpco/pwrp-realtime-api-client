@@ -60,6 +60,14 @@ public class QueryPlanInfo
     public string? WindowSource { get; set; }
 
     /// <summary>
+    /// Points this query is expected to move: series x ceil(range / resampleEvery). Null
+    /// when the points are raw, where the count depends on how often each source reported.
+    /// Ask for it with explain to size a request before running it.
+    /// </summary>
+    [JsonPropertyName("estimatedPoints")]
+    public long? EstimatedPoints { get; set; }
+
+    /// <summary>
     /// Stream keys you pinned that the bucket's catalogue does not contain. Null when
     /// there are none. A key that has stopped resolving is the drift an explicit set
     /// exists to catch, so it is reported rather than dropped — whether that is fatal is

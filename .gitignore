@@ -289,3 +289,7 @@ __pycache__/
 *.xsd.cs
 bin/
 obj/
+
+# MCP server build output
+src/PowerP.Realtime.MCP/bin/
+src/PowerP.Realtime.MCP/obj/

@@ -24,10 +24,11 @@ examples**.
 7. [Errors & retries](#errors--retries)
 8. [Best practices](#best-practices)
 9. [Limits](#limits)
-10. [The OpenAPI schema](#the-openapi-schema)
-11. [The .NET client library](#the-net-client-library)
-12. [Samples](#samples)
-13. [v1 reference (deprecated)](#v1-reference-deprecated)
+10. [Connecting an AI client (MCP)](#connecting-an-ai-client-mcp)
+11. [The OpenAPI schema](#the-openapi-schema)
+12. [The .NET client library](#the-net-client-library)
+13. [Samples](#samples)
+14. [v1 reference (deprecated)](#v1-reference-deprecated)
 
 ---
 
@@ -372,6 +373,22 @@ problem — fix it rather than retrying.
 10. **Back off** on `429`/`5xx`, honouring `Retry-After`.
 11. **Protect your secret.** Environment variables or a secret manager — never in source
    control or logs. Use your dedicated host.
+
+---
+
+## Connecting an AI client (MCP)
+
+`src/PowerP.Realtime.MCP` is an MCP server that gives a model four read-only tools over
+this API — vocabulary, explain, query, latest. It runs as a **stdio subprocess of your AI
+client**, so nothing new listens on the network and your credential never leaves the
+machine that already has it.
+
+The security model in one line: **the server has no privileges of its own** — it is bounded
+by your tenant credential's scope, host binding, rate limit and size caps, and every tool is
+read-only, so a manipulated model can at worst read data it was already given.
+
+Full setup, the security model and the guidance the tools carry:
+[src/PowerP.Realtime.MCP/README.md](src/PowerP.Realtime.MCP/README.md).
 
 ---
 

@@ -35,10 +35,10 @@ public class SelectorQueryRequest
     public List<int>? StreamKeys { get; set; }
 
     [JsonPropertyName("startTime")]
-    public DateTime StartTime { get; set; }
+    public DateTime? StartTime { get; set; }
 
     [JsonPropertyName("endTime")]
-    public DateTime EndTime { get; set; }
+    public DateTime? EndTime { get; set; }
 
     /// <summary>
     /// Aggregation window, e.g. "1m". Omit for raw points — the source instants, kept as
