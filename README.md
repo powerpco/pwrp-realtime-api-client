@@ -141,6 +141,8 @@ Any combination of these tags is a valid selector.
 ```
 
 - **`selector`** — the tags to match. An empty selector `{}` matches the whole bucket.
+- **`streamKeys`** — pin an exact signal set by key, e.g. `[4115008, 4115109]`. See
+  [Pinning an exact set](#pinning-an-exact-set).
 - **`resampleEvery`** — a window like `1m`, `5m`, `1h`. Each signal is aggregated with the
   aggregation that suits it (a counter is summed, a measurement is averaged). Omit for raw
   points. `windowPeriod` is accepted as an older spelling of the same field.
@@ -156,6 +158,30 @@ Any combination of these tags is a valid selector.
 - **`explain`** — set `true` to see how many series a selector resolves to *before*
   running it. Use it to size a broad selector.
 - **`decode`** — set `true` to expand status/bit-field signals into named conditions.
+
+#### Pinning an exact set
+
+A selector is a **question**; `streamKeys` is an **assertion**. Both belong in a
+production integration, for different jobs.
+
+```json
+{ "databaseId": 123, "streamKeys": [4115008, 4115109],
+  "startTime": "...", "endTime": "..." }
+```
+
+Use a **selector** to discover and curate a set — it is convenient and it follows the
+catalogue as it grows. Use **`streamKeys`** to hold one. If your scheduled ingest is
+defined by a selector, someone re-tagging a signal silently changes what you collect;
+a pinned set is reproducible and auditable, and diffing it is a code review.
+
+- Given together, the two **intersect**: the keys, further narrowed by the tags. An
+  empty selector alongside keys adds no constraint — it never widens a pin back to the
+  whole bucket.
+- Keys the catalogue does not contain are returned in
+  **`query.unresolvedStreamKeys`**, not dropped. A key that stops resolving is exactly
+  the drift a pinned set exists to catch; whether that is fatal is your call.
+- `measurementIndexes` is a v1 field and is **rejected** here rather than ignored — with
+  no selector left, ignoring it would have meant "every signal in the bucket".
 
 #### Raw or aggregated
 
@@ -207,7 +233,8 @@ one call. No time window needed.
     "aggregated": false,      // did these points go through an aggregation window?
     "resampleEvery": null,    // the window actually applied; null when raw
     "aggFunction": null,      // what was applied, or "mixed"; null when raw
-    "windowSource": "raw"     // raw | explicit | maxDataPoints | latest
+    "windowSource": "raw",    // raw | explicit | maxDataPoints | latest
+    "unresolvedStreamKeys": null   // pinned keys this bucket does not have
   },
   "points": [
     {
@@ -241,7 +268,28 @@ one call. No time window needed.
 
 ## Errors & retries
 
-Standard HTTP status codes; bodies are `application/problem+json`.
+Standard HTTP status codes; bodies are `application/problem+json` (RFC 7807) carrying a
+stable **`code`** and the numbers that produced the refusal, so you can branch on it
+without matching on the prose:
+
+```json
+{
+  "title":  "The request cannot be answered as written.",
+  "detail": "A range of 13h is too large for raw points; the maximum is 3h. Narrow the range, or pass resampleEvery or maxDataPoints to aggregate.",
+  "status": 400,
+  "code":   "raw_range_too_large",
+  "range":  "13h",
+  "maxRange": "3h"
+}
+```
+
+Codes in use: `selector_too_many_tags`, `series_cap_exceeded`, `raw_and_window_conflict`,
+`invalid_resample_every`, `invalid_min_interval`, `raw_range_too_large`,
+`raw_too_many_series`, `v1_field_not_supported`, `too_many_stream_keys`.
+
+> **Unknown properties are rejected**, not ignored. A misspelled field is a `400` rather
+> than a request that quietly means something else — a dropped window turns a range
+> query into a single value, which is a failure you cannot see from the response.
 
 | Status | Meaning | What to do |
 |---|---|---|
@@ -269,9 +317,11 @@ problem — fix it rather than retrying.
 5. **Bound raw ranges.** Raw is the default and is capped; for long ranges pass
    `resampleEvery`, or `maxDataPoints` and let the server pick the window.
 6. **Check `query.aggregated`** before treating a timestamp as an instant.
-7. **Generate your models from the OpenAPI schema** rather than hand-writing them.
-8. **Back off** on `429`/`5xx`.
-9. **Protect your secret.** Environment variables or a secret manager — never in source
+7. **Pin scheduled ingests with `streamKeys`**, and keep selectors for discovery. Watch
+   `query.unresolvedStreamKeys` to catch a signal that has been retagged or retired.
+8. **Generate your models from the OpenAPI schema** rather than hand-writing them.
+9. **Back off** on `429`/`5xx`.
+10. **Protect your secret.** Environment variables or a secret manager — never in source
    control or logs. Use your dedicated host.
 
 ---

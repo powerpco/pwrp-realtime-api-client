@@ -58,6 +58,15 @@ public class QueryPlanInfo
     /// "latest".</summary>
     [JsonPropertyName("windowSource")]
     public string? WindowSource { get; set; }
+
+    /// <summary>
+    /// Stream keys you pinned that the bucket's catalogue does not contain. Null when
+    /// there are none. A key that has stopped resolving is the drift an explicit set
+    /// exists to catch, so it is reported rather than dropped — whether that is fatal is
+    /// your call, not the server's.
+    /// </summary>
+    [JsonPropertyName("unresolvedStreamKeys")]
+    public List<int>? UnresolvedStreamKeys { get; set; }
 }
 
 public class SelectorPoint

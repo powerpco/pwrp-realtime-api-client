@@ -108,6 +108,9 @@ namespace PowerP.Realtime.API.Client
         /// window. Ignored when <paramref name="resampleEvery"/> is given.</param>
         /// <param name="minInterval">Floor for a derived window, e.g. "1s".</param>
         /// <param name="aggFunction">Aggregation to apply; null uses each signal's own.</param>
+        /// <param name="streamKeys">Pin an exact signal set by key; intersects with
+        /// <paramref name="selector"/>. Prefer this for a scheduled ingest, where a
+        /// re-tagged signal must not silently change what you collect.</param>
         /// <param name="explain">When true, returns the plan only, without executing it.</param>
         /// <remarks>
         /// With neither <paramref name="resampleEvery"/> nor <paramref name="maxDataPoints"/>
@@ -124,6 +127,7 @@ namespace PowerP.Realtime.API.Client
             int? maxDataPoints = null,
             string? minInterval = null,
             string? aggFunction = null,
+            IEnumerable<int>? streamKeys = null,
             bool explain = false)
         {
             await EnsureAuthenticatedAsync();
@@ -132,6 +136,7 @@ namespace PowerP.Realtime.API.Client
             {
                 DatabaseId = databaseId,
                 Selector = selector ?? new Dictionary<string, string>(),
+                StreamKeys = streamKeys?.ToList(),
                 StartTime = startTime,
                 EndTime = endTime,
                 ResampleEvery = resampleEvery,
