@@ -25,10 +25,11 @@ examples**.
 8. [Best practices](#best-practices)
 9. [Limits](#limits)
 10. [Connecting an AI client (MCP)](#connecting-an-ai-client-mcp)
-11. [The OpenAPI schema](#the-openapi-schema)
-12. [The .NET client library](#the-net-client-library)
-13. [Samples](#samples)
-14. [v1 reference (deprecated)](#v1-reference-deprecated)
+11. [The command line](#the-command-line)
+12. [The OpenAPI schema](#the-openapi-schema)
+13. [The .NET client library](#the-net-client-library)
+14. [Samples](#samples)
+15. [v1 reference (deprecated)](#v1-reference-deprecated)
 
 ---
 
@@ -389,6 +390,25 @@ read-only, so a manipulated model can at worst read data it was already given.
 
 Full setup, the security model and the guidance the tools carry:
 [src/PowerP.Realtime.MCP/README.md](src/PowerP.Realtime.MCP/README.md).
+
+---
+
+## The command line
+
+`src/PowerP.Realtime.Cli` is a single self-contained binary over the same client library:
+
+```bash
+powerp buckets
+powerp vocabulary -b 32
+powerp explain -b 32 -s level=inverter --last 24h --every 5m
+powerp query   -b 32 -s level=inverter --last 30m -f csv > inverters.csv
+powerp latest  -b 32 -s level=inverter
+```
+
+Table and CSV write only data to stdout and the context line to stderr, so a redirect
+yields a clean file while you still see whether the points are raw or aggregated. A refusal
+exits `1` with the API's own message. Full reference:
+[src/PowerP.Realtime.Cli/README.md](src/PowerP.Realtime.Cli/README.md).
 
 ---
 

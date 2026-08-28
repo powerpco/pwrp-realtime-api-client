@@ -17,6 +17,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerP.Realtime.API.Client.Tests", "tests\PowerP.Realtime.API.Client.Tests\PowerP.Realtime.API.Client.Tests.csproj", "{38D9A1D8-5DC6-4BC6-8832-85470A725548}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerP.Realtime.Cli", "src\PowerP.Realtime.Cli\PowerP.Realtime.Cli.csproj", "{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -75,6 +77,18 @@ Global
 		{38D9A1D8-5DC6-4BC6-8832-85470A725548}.Release|x64.Build.0 = Release|Any CPU
 		{38D9A1D8-5DC6-4BC6-8832-85470A725548}.Release|x86.ActiveCfg = Release|Any CPU
 		{38D9A1D8-5DC6-4BC6-8832-85470A725548}.Release|x86.Build.0 = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|x64.Build.0 = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Debug|x86.Build.0 = Debug|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|x64.ActiveCfg = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|x64.Build.0 = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|x86.ActiveCfg = Release|Any CPU
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -84,5 +98,6 @@ Global
 		{3B6BF37B-6546-4D31-AA7F-11833435EBCE} = {ACE8699C-1AFB-4FAC-BC76-4CA54FDF9397}
 		{F2D71CDC-53CD-4749-88CC-D0D274110DAF} = {EDD80CE3-5420-4E0D-BA51-66133E60B45A}
 		{38D9A1D8-5DC6-4BC6-8832-85470A725548} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{6EC7729F-7A9D-43A8-8227-C9EBB20EACAE} = {EDD80CE3-5420-4E0D-BA51-66133E60B45A}
 	EndGlobalSection
 EndGlobal
