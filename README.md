@@ -23,10 +23,11 @@ examples**.
 6. [Response format](#response-format)
 7. [Errors & retries](#errors--retries)
 8. [Best practices](#best-practices)
-9. [The OpenAPI schema](#the-openapi-schema)
-10. [The .NET client library](#the-net-client-library)
-11. [Samples](#samples)
-12. [v1 reference (deprecated)](#v1-reference-deprecated)
+9. [Limits](#limits)
+10. [The OpenAPI schema](#the-openapi-schema)
+11. [The .NET client library](#the-net-client-library)
+12. [Samples](#samples)
+13. [v1 reference (deprecated)](#v1-reference-deprecated)
 
 ---
 
@@ -155,8 +156,9 @@ Any combination of these tags is a valid selector.
   aggregation declared for it in the catalogue.
 - **`raw`** — `true` asks for raw points explicitly. Same result as omitting the window,
   but it says so out loud; combining it with `resampleEvery` is a `400` rather than a guess.
-- **`explain`** — set `true` to see how many series a selector resolves to *before*
-  running it. Use it to size a broad selector.
+- **`explain`** — set `true` to resolve the request and return the plan, including
+  `estimatedPoints`, **without moving any data**. This is the cost preview: use it to
+  price a broad request before paying for it.
 - **`decode`** — set `true` to expand status/bit-field signals into named conditions.
 
 #### Pinning an exact set
@@ -208,6 +210,9 @@ one call. No time window needed.
 { "databaseId": 123, "selector": { "level": "inverter", "signal": "active_power" } }
 ```
 
+Supply `startTime`/`endTime` or `window` to ask for the last value **as of** a moment
+rather than now — useful for reconciliation. `maxSeries` and `streamKeys` apply here too.
+
 ### Sizing with `explain`
 
 ```json
@@ -234,6 +239,7 @@ one call. No time window needed.
     "resampleEvery": null,    // the window actually applied; null when raw
     "aggFunction": null,      // what was applied, or "mixed"; null when raw
     "windowSource": "raw",    // raw | explicit | maxDataPoints | latest
+    "estimatedPoints": 1440,  // points this request is expected to move; null when raw
     "unresolvedStreamKeys": null   // pinned keys this bucket does not have
   },
   "points": [
@@ -258,11 +264,45 @@ one call. No time window needed.
   `query.resampleEvery` tells you how wide. Do not infer this from what you asked for: the
   server may have derived a window you did not name.
 
+- **`query.estimatedPoints`** is `series x ceil(range / resampleEvery)` — what the query
+  will actually move. It is null for raw points, where the count depends on how often each
+  source reported and cannot be known in advance. Read it back to assert what you got, and
+  get it from `explain` to size a request before you run it.
+
 > **Bind against the schema, not against this example.** The full request and response
 > models are published as OpenAPI (see [The OpenAPI schema](#the-openapi-schema)).
 > Generating your model is worth the five minutes: a hand-written one that mismatches
 > deserialises to nulls without raising anything, and an empty result is indistinguishable
 > from a plant that is genuinely idle.
+
+---
+
+## Limits
+
+The API is shared, so a single request is bounded by the work it does, not only by how
+often you call.
+
+| Limit | Default | What happens past it |
+|---|---|---|
+| Raw range | `3h` | `400 raw_range_too_large` |
+| Raw signals | `500` | `400 raw_too_many_series` |
+| Points per request (aggregated) | `5,000,000` | `400 query_too_large` |
+| Signals per request | `20,000` | `400 series_cap_exceeded` |
+| Requests in flight per client | `4` | `429 too_many_concurrent_requests` |
+| Request body | `2 MB` | `413` |
+
+Requests per second is a separate limit carried on your credential.
+
+**Why a point ceiling and not just a series cap:** a whole-plant sweep over five years at
+one-second resolution is a *single* request, well inside every count-based limit, and it
+is the cheapest way to hurt a shared historian. Points are the quantity actually moved,
+and for an aggregated query they are known exactly before it runs — so the refusal arrives
+instead of the load. Call `explain` first if you are not sure; it returns
+`estimatedPoints` and moves nothing.
+
+**Concurrency, if you are driving this from an agent or a model:** four in flight per
+credential. A `429` carries `Retry-After`. Prefer one broad selector over many parallel
+narrow ones — that is what selectors are for, and it is both faster and cheaper.
 
 ---
 
@@ -283,13 +323,20 @@ without matching on the prose:
 }
 ```
 
-Codes in use: `selector_too_many_tags`, `series_cap_exceeded`, `raw_and_window_conflict`,
-`invalid_resample_every`, `invalid_min_interval`, `raw_range_too_large`,
-`raw_too_many_series`, `v1_field_not_supported`, `too_many_stream_keys`.
+Codes in use: `malformed_request`, `selector_too_many_tags`, `series_cap_exceeded`,
+`raw_and_window_conflict`, `invalid_resample_every`, `invalid_min_interval`,
+`raw_range_too_large`, `raw_too_many_series`, `query_too_large`,
+`v1_field_not_supported`, `too_many_stream_keys`, `too_many_concurrent_requests`.
 
-> **Unknown properties are rejected**, not ignored. A misspelled field is a `400` rather
-> than a request that quietly means something else — a dropped window turns a range
-> query into a single value, which is a failure you cannot see from the response.
+Every refusal also carries `type` and `traceId`. Quote the `traceId` when reporting one —
+it is what lets us find your request.
+
+> **Unknown properties are rejected**, not ignored. A misspelled field is a `400`
+> (`malformed_request`, with the offending JSON paths in `fields`) rather than a request
+> that quietly means something else — a dropped window turns a range query into a single
+> value, which is a failure you cannot see from the response.
+>
+> Unset optional fields may be sent as `null` or omitted; both mean absence.
 
 | Status | Meaning | What to do |
 |---|---|---|
@@ -319,9 +366,11 @@ problem — fix it rather than retrying.
 6. **Check `query.aggregated`** before treating a timestamp as an instant.
 7. **Pin scheduled ingests with `streamKeys`**, and keep selectors for discovery. Watch
    `query.unresolvedStreamKeys` to catch a signal that has been retagged or retired.
-8. **Generate your models from the OpenAPI schema** rather than hand-writing them.
-9. **Back off** on `429`/`5xx`.
-10. **Protect your secret.** Environment variables or a secret manager — never in source
+8. **Price a broad request with `explain`** before running it, and read
+   `query.estimatedPoints` back.
+9. **Generate your models from the OpenAPI schema** rather than hand-writing them.
+10. **Back off** on `429`/`5xx`, honouring `Retry-After`.
+11. **Protect your secret.** Environment variables or a secret manager — never in source
    control or logs. Use your dedicated host.
 
 ---
