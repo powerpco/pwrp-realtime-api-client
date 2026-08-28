@@ -20,6 +20,20 @@ public class SelectorQueryRequest
     [JsonPropertyName("selector")]
     public Dictionary<string, string> Selector { get; set; } = new();
 
+    /// <summary>
+    /// Pin an exact set of signals by stream key, independent of tagging.
+    ///
+    /// A selector is a question; this is an assertion. Use a selector to discover and
+    /// curate a set, and keys to hold one: re-tagging a signal silently changes what a
+    /// selector-defined ingest collects, whereas a pinned set is reproducible and
+    /// auditable. Combined with <see cref="Selector"/> the two intersect.
+    ///
+    /// Keys the catalogue does not contain come back in
+    /// <see cref="QueryPlanInfo.UnresolvedStreamKeys"/> instead of being dropped.
+    /// </summary>
+    [JsonPropertyName("streamKeys")]
+    public List<int>? StreamKeys { get; set; }
+
     [JsonPropertyName("startTime")]
     public DateTime StartTime { get; set; }
 

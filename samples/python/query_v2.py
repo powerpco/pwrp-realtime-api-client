@@ -112,7 +112,20 @@ def main():
     print(f"budgeted: {len(budgeted['points'])} points "
           f"at every={budgeted['query']['resampleEvery']}")
 
-    # 6. Latest value per series — the polling pattern, one call.
+    # 6. Pin an exact set by key. Prefer this over a selector for a scheduled ingest:
+    #    a selector follows the catalogue, so re-tagging a signal changes what you
+    #    collect without anything failing. Keys are reproducible and diffable.
+    #    Keys the catalogue does not have come back in query.unresolvedStreamKeys.
+    keys = sorted({p["streamKey"] for p in ranged["points"]})[:3]
+    if keys:
+        pinned = post("/v2/query", {
+            "databaseId": DATABASE_ID, "streamKeys": keys,
+            "startTime": iso(end - timedelta(minutes=5)), "endTime": iso(end),
+        })
+        missing = pinned["query"].get("unresolvedStreamKeys")
+        print(f"pinned {keys}: {len(pinned['points'])} points, unresolved={missing}")
+
+    # 7. Latest value per series — the polling pattern, one call.
     latest = post("/v2/query/latest", {"databaseId": DATABASE_ID, "selector": SELECTOR})
     print(f"latest: {len(latest['points'])} series")
     for p in latest["points"][:8]:

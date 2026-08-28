@@ -48,7 +48,20 @@ var raw = await client.QuerySelectorAsync(
     databaseId, selector, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow);
 Console.WriteLine($"raw: {raw.Points.Count} points (aggregated={raw.Query?.Aggregated})");
 
-// 6. Or state a point budget and let the server choose the window.
+// 6. Pin an exact set by key. Prefer this over a selector for a scheduled ingest: a
+//    selector follows the catalogue, so re-tagging a signal changes what you collect
+//    without anything failing. Keys are reproducible and diffable.
+var keys = series.Points.Select(p => p.StreamKey).Distinct().Take(3).ToList();
+if (keys.Count > 0)
+{
+    var pinned = await client.QuerySelectorAsync(
+        databaseId, selector: new Dictionary<string, string>(),
+        DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow, streamKeys: keys);
+    Console.WriteLine($"pinned [{string.Join(", ", keys)}]: {pinned.Points.Count} points, "
+        + $"unresolved={(pinned.Query?.UnresolvedStreamKeys is { } u ? string.Join(",", u) : "none")}");
+}
+
+// 7. Or state a point budget and let the server choose the window.
 var budgeted = await client.QuerySelectorAsync(
     databaseId, selector, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, maxDataPoints: 200);
 Console.WriteLine($"budgeted: {budgeted.Points.Count} points "
