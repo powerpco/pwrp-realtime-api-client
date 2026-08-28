@@ -74,7 +74,15 @@ namespace PowerP.Realtime.API.Client
             }
             catch (JsonException) { /* not a problem document; the raw body is still useful */ }
 
+            var retryAfter = response.Headers.RetryAfter?.Delta?.TotalSeconds
+                ?? (response.Headers.RetryAfter?.Date is { } until
+                    ? Math.Max(0, (until - DateTimeOffset.UtcNow).TotalSeconds)
+                    : (double?)null);
+
             var explanation = detail ?? (string.IsNullOrWhiteSpace(body) ? "(no body)" : body);
+            if (retryAfter is { } wait)
+                explanation += $" Retry after {wait:0} seconds.";
+
             throw new HttpRequestException(
                 $"{(int)response.StatusCode} {response.ReasonPhrase}" +
                 $"{(code is null ? "" : $" [{code}]")}: {explanation}",
@@ -160,6 +168,18 @@ namespace PowerP.Realtime.API.Client
             response.Dispose();
             await EnsureAuthenticatedAsync(force: true);
             return await send();
+        }
+
+        /// <summary>
+        /// The buckets this credential can reach. Tenant-scoped by the server, so it returns
+        /// your own and nothing else — the natural first call when you do not yet know an id.
+        /// </summary>
+        public async Task<IReadOnlyList<DatabaseDto>> GetBucketsAsync()
+        {
+            var response = await SendAsync(() => _httpClient.GetAsync("v1/databases"));
+            await EnsureSuccessAsync(response);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            return await response.Content.ReadFromJsonAsync<List<DatabaseDto>>(options) ?? [];
         }
 
         public async Task<IReadOnlyList<MeasurementDto>> GetMeasurementsAsync()

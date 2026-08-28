@@ -5,6 +5,7 @@ anything else that speaks the [Model Context Protocol](https://modelcontextproto
 so a model can read a plant's historian through four typed operations instead of composing
 HTTP by hand.
 
+- `powerp_buckets` — the buckets your credential can read, with their ids
 - `powerp_vocabulary` — the tag dimensions of a bucket and the values each takes
 - `powerp_explain` — price a query without running it
 - `powerp_query` — read measurements over a range, raw or aggregated
@@ -58,7 +59,10 @@ description is there to save a round trip, not to be the control.
 You need a **tenant client id and secret** — the same pair you would use from your own
 code. Ask us for one, or reuse what you have.
 
-- It is a **secret**. Put it in your AI client's configuration, not in a repository.
+- It is a **secret**. Prefer `POWERP_CLIENT_SECRET_FILE`, pointing at a file the operating
+  system protects, over putting the value in your AI client's configuration: that file sits
+  unencrypted on disk, is often synced between machines, and is occasionally committed by
+  accident.
 - Prefer a **dedicated credential** for AI use, so you can rate-limit it separately and
   revoke it without disturbing your production integration.
 - Prefer a **read-only** credential. This server never needs more.
@@ -66,6 +70,16 @@ code. Ask us for one, or reuse what you have.
 
 The credential is read from the environment and never appears in a tool result, a log line,
 or anything returned to the model.
+
+### Sessions and tokens
+
+The server exchanges your credential for a bearer token, refreshes it two minutes before it
+expires, and mints a fresh one if a call is ever rejected as unauthorised. It is meant to be
+left running for days; nothing needs restarting when a token ages out.
+
+Every tool declares itself read-only and idempotent in its annotations, and publishes an
+output schema, so a client can show you what a tool does before it runs and validate what
+comes back.
 
 ### Human in the loop
 
@@ -83,7 +97,7 @@ Three environment variables:
 |---|---|
 | `POWERP_BASE_URL` | `https://acme.powerp.app/rt-api/api` |
 | `POWERP_CLIENT_ID` | `f2dc2c97-…` |
-| `POWERP_CLIENT_SECRET` | your secret |
+| `POWERP_CLIENT_SECRET` | your secret — or `POWERP_CLIENT_SECRET_FILE` pointing at a file holding it |
 
 ### Claude Desktop / Claude Code
 
@@ -102,7 +116,22 @@ Three environment variables:
 }
 ```
 
-The server refuses to start if any of the three is missing, rather than starting and
+With a secret file instead:
+
+```json
+"env": {
+  "POWERP_BASE_URL": "https://acme.powerp.app/rt-api/api",
+  "POWERP_CLIENT_ID": "…",
+  "POWERP_CLIENT_SECRET_FILE": "/home/you/.config/powerp/secret"
+}
+```
+
+```bash
+install -m 600 /dev/null ~/.config/powerp/secret
+printf '%s' 'your-secret' > ~/.config/powerp/secret
+```
+
+The server refuses to start if the base URL, the client id or a secret is missing, rather than starting and
 failing inside the first tool call — where a model reads the failure as the plant being
 unreachable instead of the server being misconfigured.
 
@@ -121,15 +150,17 @@ dotnet publish src/PowerP.Realtime.MCP -c Release -r linux-x64
 
 The tool descriptions carry this, but for a reader:
 
-1. **`powerp_vocabulary` first.** Selectors are built from a bucket's tag dimensions, and a
+1. **`powerp_buckets` first** if you do not know a bucket id — every other tool needs one
+   and there is no way to guess it.
+2. **`powerp_vocabulary` next.** Selectors are built from a bucket's tag dimensions, and a
    guessed dimension returns nothing rather than an error.
-2. **`powerp_explain` before anything broad.** It reports how many signals resolve and how
+3. **`powerp_explain` before anything broad.** It reports how many signals resolve and how
    many points the query would move, and reads nothing.
-3. **`powerp_query` with the window you mean.** No window gives raw points at their real
+4. **`powerp_query` with the window you mean.** No window gives raw points at their real
    instants — right for state changes, alarms and setpoints, where an aggregated timestamp
    sits on a window boundary and so reads as earlier than it happened. Give
    `resampleEvery` or `maxDataPoints` for anything long.
-4. **Read `aggregated` in the result** before treating a timestamp as an instant, rather
+5. **Read `aggregated` in the result** before treating a timestamp as an instant, rather
    than assuming from what was asked.
 
 When a call is refused, the error names the limit, the numbers and the remedy. It is meant
