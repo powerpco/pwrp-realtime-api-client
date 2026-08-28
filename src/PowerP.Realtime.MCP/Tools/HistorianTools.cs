@@ -44,7 +44,7 @@ public class HistorianTools(PowerPAPIClient client)
         }
     }
 
-    [McpServerTool(Name = "powerp_vocabulary")]
+    [McpServerTool(Name = "powerp_vocabulary", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true)]
     [Description("""
         List the tag dimensions of a bucket and the values each one takes. Call this first:
         selectors are built from these, and guessing a dimension returns nothing rather than
@@ -58,7 +58,7 @@ public class HistorianTools(PowerPAPIClient client)
             v => new { bucketId = v.Id, bucket = v.Bucket, signals = v.Signals, dimensions = v.Dimensions });
     }
 
-    [McpServerTool(Name = "powerp_explain")]
+    [McpServerTool(Name = "powerp_explain", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true)]
     [Description("""
         Price a query without running it: how many signals the selection resolves to, and
         how many points it would move. Nothing is read from the historian.
@@ -94,7 +94,7 @@ public class HistorianTools(PowerPAPIClient client)
         });
     }
 
-    [McpServerTool(Name = "powerp_query")]
+    [McpServerTool(Name = "powerp_query", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true)]
     [Description("""
         Read measurements over a time range.
 
@@ -147,7 +147,7 @@ public class HistorianTools(PowerPAPIClient client)
         });
     }
 
-    [McpServerTool(Name = "powerp_latest")]
+    [McpServerTool(Name = "powerp_latest", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true)]
     [Description("""
         The most recent value of every signal a selection resolves to, in one call. This is
         the right tool for "what is happening now" — it reads one point per signal rather

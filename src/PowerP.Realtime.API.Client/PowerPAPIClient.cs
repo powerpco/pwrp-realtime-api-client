@@ -12,12 +12,28 @@ namespace PowerP.Realtime.API.Client
         private readonly string _clientId;
         private readonly string _clientSecret;
         private string? _accessToken;
+        private DateTimeOffset _accessTokenExpiresAt = DateTimeOffset.MinValue;
+
+        /// <summary>Serialises refreshes so concurrent calls mint one token, not N.</summary>
+        private readonly SemaphoreSlim _authGate = new(1, 1);
+
+        /// <summary>
+        /// Refresh this long before the token actually expires, so a call that starts just
+        /// under the wire does not arrive just over it.
+        /// </summary>
+        private static readonly TimeSpan RefreshMargin = TimeSpan.FromMinutes(2);
 
         /// <param name="baseUrl">
         /// Your host's API root, e.g. <c>https://acme.powerp.app/rt-api/api</c>. A trailing
         /// slash is added if missing.
         /// </param>
-        public PowerPAPIClient(string baseUrl, string clientId, string clientSecret)
+        /// <param name="handler">
+        /// Supply your own handler to set a proxy, pin certificates, or add a retry policy.
+        /// Omit it and the client makes its own.
+        /// </param>
+        /// <param name="timeout">Request timeout; the .NET default of 100 seconds applies otherwise.</param>
+        public PowerPAPIClient(string baseUrl, string clientId, string clientSecret,
+                               HttpMessageHandler? handler = null, TimeSpan? timeout = null)
         {
             if (string.IsNullOrWhiteSpace(baseUrl))
                 throw new ArgumentException("A base URL is required.", nameof(baseUrl));
@@ -29,10 +45,9 @@ namespace PowerP.Realtime.API.Client
             _baseUrl = baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/";
             _clientId = clientId;
             _clientSecret = clientSecret;
-            _httpClient = new HttpClient
-            {
-                BaseAddress = new Uri(_baseUrl)
-            };
+            _httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
+            _httpClient.BaseAddress = new Uri(_baseUrl);
+            if (timeout is { } t) _httpClient.Timeout = t;
         }
 
         /// <summary>
@@ -71,38 +86,85 @@ namespace PowerP.Realtime.API.Client
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
 
-        private async Task EnsureAuthenticatedAsync()
+        /// <summary>
+        /// Ensures a token that is still valid, minting or refreshing one when it is not.
+        ///
+        /// The previous version fetched once and cached forever. Tokens last an hour, and a
+        /// process that outlives one — a long-running integration, or an MCP server held
+        /// open by an AI client for days — started answering 401 to everything and never
+        /// recovered. Expiry is what the server already tells us in <c>expires_in</c>.
+        /// </summary>
+        private async Task EnsureAuthenticatedAsync(bool force = false)
         {
-            if (!string.IsNullOrEmpty(_accessToken)) return;
-            
-            var formData = new List<KeyValuePair<string, string>>
-            {
-                new("client_id", _clientId),
-                new("client_secret", _clientSecret),
-                new("grant_type", "client_credentials")
-            };
-            
-            // Note: Adjust path if API prefixes change. Assuming base includes /api or logic handles it.
-            // Based on other files, auth is at /api/v1/auth/token
-            // If base url is http://locahost:5000/api, then path is v1/auth/token
+            if (!force && _accessToken is { Length: > 0 }
+                && DateTimeOffset.UtcNow < _accessTokenExpiresAt - RefreshMargin)
+                return;
 
-            var response = await _httpClient.PostAsync("v1/auth/token", new FormUrlEncodedContent(formData));
-            await EnsureSuccessAsync(response);
-
-            var tokenData = await response.Content.ReadFromJsonAsync<AuthTokenDto>();
-            if (tokenData != null)
+            await _authGate.WaitAsync();
+            try
             {
+                // Re-check inside the gate: several callers may have queued behind one
+                // refresh, and only the first needs to do it.
+                if (!force && _accessToken is { Length: > 0 }
+                    && DateTimeOffset.UtcNow < _accessTokenExpiresAt - RefreshMargin)
+                    return;
+
+                var formData = new List<KeyValuePair<string, string>>
+                {
+                    new("client_id", _clientId),
+                    new("client_secret", _clientSecret),
+                    new("grant_type", "client_credentials")
+                };
+
+                var response = await _httpClient.PostAsync("v1/auth/token", new FormUrlEncodedContent(formData));
+                await EnsureSuccessAsync(response);
+
+                var tokenData = await response.Content.ReadFromJsonAsync<AuthTokenDto>()
+                    ?? throw new HttpRequestException("The token endpoint returned no token.");
+
                 _accessToken = tokenData.AccessToken;
-                _httpClient.DefaultRequestHeaders.Authorization = 
+                // A missing or absurd lifetime is treated as short rather than as forever:
+                // refreshing too often costs one request, trusting too long costs an outage.
+                var lifetime = tokenData.ExpiresIn > 0
+                    ? TimeSpan.FromSeconds(tokenData.ExpiresIn)
+                    : TimeSpan.FromMinutes(5);
+                _accessTokenExpiresAt = DateTimeOffset.UtcNow + lifetime;
+
+                _httpClient.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
-                Console.WriteLine($"[Client] Successfully Authenticated. Token Length: {_accessToken.Length}");
+
+                // Nothing is written to standard output. For a stdio MCP server that stream
+                // is the JSON-RPC channel, and a stray line corrupts the protocol.
             }
+            finally
+            {
+                _authGate.Release();
+            }
+        }
+
+        /// <summary>
+        /// Sends a request, and on a 401 mints a fresh token and sends it once more.
+        ///
+        /// Expiry is handled proactively above; this covers the cases a clock cannot
+        /// predict — a signing key rotated under us, or a token invalidated early. One
+        /// retry, so a genuinely rejected credential fails as a credential error rather
+        /// than looping.
+        /// </summary>
+        private async Task<HttpResponseMessage> SendAsync(Func<Task<HttpResponseMessage>> send)
+        {
+            await EnsureAuthenticatedAsync();
+
+            var response = await send();
+            if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized) return response;
+
+            response.Dispose();
+            await EnsureAuthenticatedAsync(force: true);
+            return await send();
         }
 
         public async Task<IReadOnlyList<MeasurementDto>> GetMeasurementsAsync()
         {
-            await EnsureAuthenticatedAsync();
-            var response = await _httpClient.GetAsync("v1/measurements"); 
+            var response = await SendAsync(() => _httpClient.GetAsync("v1/measurements"));
             await EnsureSuccessAsync(response);
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var measurements = await response.Content.ReadFromJsonAsync<List<MeasurementDto>>(options);
@@ -117,8 +179,6 @@ namespace PowerP.Realtime.API.Client
             string aggFunction,
             string windowPeriod = "200ms")
         {
-            await EnsureAuthenticatedAsync();
-
             if (measurementIndexes == null || measurementIndexes.Count == 0)
             {
                 return Array.Empty<MeasurementValueDto>();
@@ -137,7 +197,7 @@ namespace PowerP.Realtime.API.Client
             // Re-reading previous `PowerPAPIClient.cs`: it was `_httpClient.PostAsJsonAsync("Query", payload);`
             // QueryController maps to api/v1/Query (controller name).
             
-            var response = await _httpClient.PostAsJsonAsync("v1/Query", payload);
+            var response = await SendAsync(() => _httpClient.PostAsJsonAsync("v1/Query", payload));
             await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -180,8 +240,6 @@ namespace PowerP.Realtime.API.Client
             bool decode = false,
             bool explain = false)
         {
-            await EnsureAuthenticatedAsync();
-
             var payload = new SelectorQueryRequest
             {
                 DatabaseId = databaseId,
@@ -197,7 +255,7 @@ namespace PowerP.Realtime.API.Client
                 Explain = explain
             };
 
-            var response = await _httpClient.PostAsJsonAsync("v2/query", payload, RequestJson);
+            var response = await SendAsync(() => _httpClient.PostAsJsonAsync("v2/query", payload, RequestJson));
             await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -212,8 +270,6 @@ namespace PowerP.Realtime.API.Client
         public async Task<SelectorQueryResponse> QuerySelectorLatestAsync(
             int databaseId, Dictionary<string, string> selector, bool decode = false)
         {
-            await EnsureAuthenticatedAsync();
-
             var payload = new SelectorQueryRequest
             {
                 DatabaseId = databaseId,
@@ -221,7 +277,7 @@ namespace PowerP.Realtime.API.Client
                 Decode = decode,
             };
 
-            var response = await _httpClient.PostAsJsonAsync("v2/query/latest", payload, RequestJson);
+            var response = await SendAsync(() => _httpClient.PostAsJsonAsync("v2/query/latest", payload, RequestJson));
             await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -235,9 +291,7 @@ namespace PowerP.Realtime.API.Client
         /// </summary>
         public async Task<VocabularyResponse> GetVocabularyAsync(int databaseId)
         {
-            await EnsureAuthenticatedAsync();
-
-            var response = await _httpClient.GetAsync($"v2/databases/{databaseId}/vocabulary");
+            var response = await SendAsync(() => _httpClient.GetAsync($"v2/databases/{databaseId}/vocabulary"));
             await EnsureSuccessAsync(response);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };

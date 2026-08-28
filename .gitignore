@@ -293,3 +293,5 @@ obj/
 # MCP server build output
 src/PowerP.Realtime.MCP/bin/
 src/PowerP.Realtime.MCP/obj/
+tests/PowerP.Realtime.API.Client.Tests/bin/
+tests/PowerP.Realtime.API.Client.Tests/obj/
